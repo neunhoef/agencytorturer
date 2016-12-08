@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -14,11 +16,11 @@ var perms = [6][3]int{
 	{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0},
 }
 
-var connections = [4][]int {
-	[]int{}, []int{1}, []int{2}, []int{1,2},
+var connections = [4][]int{
+	[]int{}, []int{1}, []int{2}, []int{1, 2},
 }
 
-var delays = [...][2]bool {
+var delays = [...][2]bool{
 	{false, false},
 	{false, true},
 	{true, false},
@@ -27,6 +29,8 @@ var delays = [...][2]bool {
 
 var arangodExecutable string = "./build/bin/arangod"
 var arangodJSstartup string = "./js"
+
+var skipCases int = 0
 
 func makeArgs(myDir string, myAddress string, myPort string, i int) (args []string) {
 	args = make([]string, 0, 40)
@@ -62,6 +66,8 @@ func makeArgs(myDir string, myAddress string, myPort string, i int) (args []stri
 	return
 }
 
+var count int = 0
+
 func startAgent(i int, links []int) (agentProc *os.Process) {
 	fmt.Println("Starting agent", i, "...")
 	myAddress := "localhost:"
@@ -72,7 +78,7 @@ func startAgent(i int, links []int) (agentProc *os.Process) {
 	// Start agent:
 	var err error
 	myPort = strconv.Itoa(4001 + i)
-	myDir = "agent" + myPort + string(os.PathSeparator)
+	myDir = strconv.Itoa(count) + "agent" + myPort + string(os.PathSeparator)
 	os.MkdirAll(myDir+"data", 0755)
 	os.MkdirAll(myDir+"apps", 0755)
 	args = makeArgs(myDir, myAddress, myPort, i)
@@ -86,10 +92,22 @@ func startAgent(i int, links []int) (agentProc *os.Process) {
 
 func killAgent(agentProc *os.Process, i int) {
 	fmt.Println("Killing agent:", i)
-	if agentProc != nil {
-		agentProc.Kill()
-		agentProc.Wait()
+	myPort := strconv.Itoa(4001 + i)
+	myDir := strconv.Itoa(count) + "agent" + myPort
+	client := &http.Client{
+		Timeout: time.Duration(15) * time.Second,
 	}
+	addr := "http://localhost:" + myPort
+	req, e := http.NewRequest("DELETE", addr+"/_admin/shutdown", nil)
+	r, e := client.Do(req)
+	if e == nil && r.StatusCode == http.StatusOK {
+		agentProc.Wait()
+		os.RemoveAll(myDir)
+		return
+	}
+	agentProc.Kill()
+	agentProc.Wait()
+	os.RemoveAll(myDir)
 }
 
 func waitApiVersion(addr string) {
@@ -188,42 +206,42 @@ func testAgency() {
 	waitApiAgencyConfig("http://localhost:4003", &leaderId)
 }
 
-var count int = 0
-
 func doCase(perm [3]int, graph [3][]int, delay [2]bool) {
 	count++
 	fmt.Println("\nCase", count, ":", perm, graph, delay)
-	os.RemoveAll("agent4001")
-	os.RemoveAll("agent4002")
-	os.RemoveAll("agent4003")
-	a0 := startAgent(perm[0], graph[perm[0]])
-	if delay[0] {
-		time.Sleep(1000000000)
+	var a [3]*os.Process
+	for i := 0; i < 3; i++ {
+		a[i] = startAgent(perm[i], graph[perm[i]])
+		if i < 2 && delay[i] {
+			time.Sleep(1000000000)
+		}
 	}
-	a1 := startAgent(perm[1], graph[perm[1]])
-	if delay[1] {
-		time.Sleep(1000000000)
-	}
-	a2 := startAgent(perm[2], graph[perm[2]])
+
 	testAgency()
-	killAgent(a2, perm[2])
-	killAgent(a1, perm[1])
-	killAgent(a0, perm[0])
-	time.Sleep(1000000000)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	for i := 2; i >= 0; i-- {
+		go func(ii int) {
+			killAgent(a[ii], perm[ii])
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
 }
 
 func isConnected(graph [3][]int) bool {
-	var link [3][3]bool    // all false
+	var link [3][3]bool // all false
 	for i := 0; i < 3; i++ {
 		for _, j := range graph[i] {
 			link[i][j] = true
 			link[j][i] = true
 		}
 	}
-  tab := make([]int, 1, 3)
-	var seen  = [3]bool {true, false, false}
+	tab := make([]int, 1, 3)
+	var seen = [3]bool{true, false, false}
 	for i := 0; i < len(tab); i++ {
-    p := tab[i]
+		p := tab[i]
 		for j := 0; j < 3; j++ {
 			if j != p && link[p][j] && !seen[j] {
 				tab = append(tab, j)
@@ -235,6 +253,10 @@ func isConnected(graph [3][]int) bool {
 }
 
 func main() {
+	flag.IntVar(&skipCases, "skip", skipCases, "cases to skip")
+	flag.Parse()
+	count += skipCases
+	counter := 0
 	for i := 0; i < len(perms); i++ {
 		var graph [3][]int
 		for c1 := 0; c1 < len(connections); c1++ {
@@ -245,21 +267,23 @@ func main() {
 			for c2 := 0; c2 < len(connections); c2++ {
 				graph[1] = make([]int, 0, 2)
 				for _, d := range connections[c2] {
-					graph[1] = append(graph[1], (d + 1) % 3)
+					graph[1] = append(graph[1], (d+1)%3)
 				}
 				for c3 := 0; c3 < len(connections); c3++ {
 					graph[2] = make([]int, 0, 2)
 					for _, d := range connections[c3] {
-						graph[2] = append(graph[2], (d + 2) % 3)
+						graph[2] = append(graph[2], (d+2)%3)
 					}
 					if isConnected(graph) {
 						for j := 0; j < len(delays); j++ {
-							doCase(perms[i], graph, delays[j])
+							counter++
+							if counter > skipCases {
+								doCase(perms[i], graph, delays[j])
+							}
 						}
-				  }
+					}
 				}
 			}
 		}
 	}
 }
-
