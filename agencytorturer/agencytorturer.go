@@ -160,7 +160,7 @@ func (control AgencyControl) String() string {
 func waitApiAgencyConfig(addr string, leaderId *string) {
 	for {
 		client := &http.Client{
-			Timeout: time.Duration(15) * time.Second,
+			Timeout: 15 * time.Second,
 		}
 		r, e := client.Get(addr + "/_api/agency/config")
 		if e == nil && r.StatusCode == http.StatusOK {
@@ -178,12 +178,16 @@ func waitApiAgencyConfig(addr string, leaderId *string) {
 			} else {
 				if *leaderId == "" {
 					*leaderId = control.LeaderId
-					fmt.Println("Agent sane.")
+					fmt.Println("Agent", addr, "sane.")
 					return
 				} else if *leaderId == control.LeaderId {
-					fmt.Println("Agent sane.")
+					fmt.Println("Agent", addr, "sane.")
 					return
 				}
+				fmt.Println("Seeing different leader than before: old:", *leaderId,
+					"new:", control.LeaderId, "starting from scratch...")
+				*leaderId = ""
+				return
 			}
 			time.Sleep(1000000000)
 			continue
@@ -201,9 +205,13 @@ func testAgency() {
 	waitApiVersion("http://localhost:4001")
 	waitApiVersion("http://localhost:4002")
 	waitApiVersion("http://localhost:4003")
-	waitApiAgencyConfig("http://localhost:4001", &leaderId)
-	waitApiAgencyConfig("http://localhost:4002", &leaderId)
-	waitApiAgencyConfig("http://localhost:4003", &leaderId)
+	for i := 0; i < 3; i++ {
+		port := strconv.Itoa(4001 + i)
+		waitApiAgencyConfig("http://localhost:"+port, &leaderId)
+		if leaderId == "" {
+			i = 0
+		}
+	}
 }
 
 func doCase(perm [3]int, graph [3][]int, delay [2]bool) {
