@@ -27,10 +27,10 @@ var delays = [...][2]bool{
 	{true, true},
 }
 
-var arangodExecutable string = "./build/bin/arangod"
-var arangodJSstartup string = "./js"
+var arangodExecutable = "./build/bin/arangod"
+var arangodJSstartup = "./js"
 
-var skipCases int = 0
+var skipCases int
 
 func makeArgs(myDir string, myAddress string, myPort string, i int) (args []string) {
 	args = make([]string, 0, 40)
@@ -66,7 +66,7 @@ func makeArgs(myDir string, myAddress string, myPort string, i int) (args []stri
 	return
 }
 
-var count int = 0
+var count int
 
 func startAgent(i int, links []int) (agentProc *os.Process) {
 	fmt.Println("Starting agent", i, "...")
@@ -110,9 +110,12 @@ func killAgent(agentProc *os.Process, i int) {
 	os.RemoveAll(myDir)
 }
 
-func waitApiVersion(addr string) {
+func waitAPIVersion(addr string) {
 	for {
 		r, e := http.Get(addr)
+		if r != nil && r.Body != nil {
+			defer r.Body.Close()
+		}
 		if e == nil && r.StatusCode == http.StatusOK {
 			fmt.Println("Reached", addr+"/_api/version, good")
 			return
@@ -125,10 +128,11 @@ func waitApiVersion(addr string) {
 	}
 }
 
+// AgencyConfiguration describes the configuration in agency
 type AgencyConfiguration struct {
 	Pool     map[string]string `json:"pool"`
 	Active   []string          `json:"active"`
-	Id       string            `json:"id"`
+	ID       string            `json:"id"`
 	Endpoint string            `json:"endpoint"`
 }
 
@@ -141,23 +145,24 @@ func (conf AgencyConfiguration) String() string {
 	for _, s := range conf.Active {
 		res += `"` + s + `",`
 	}
-	res += "]\nId:" + conf.Id + " Endpoint:" + conf.Endpoint
+	res += "]\nId:" + conf.ID + " Endpoint:" + conf.Endpoint
 	return res
 }
 
+// AgencyControl describes the result structure for control api of agency.
 type AgencyControl struct {
 	Term          int                 `json:"term"`
-	LeaderId      string              `json:"leaderId"`
+	LeaderID      string              `json:"leaderId"`
 	Configuration AgencyConfiguration `json:"configuration"`
 }
 
 func (control AgencyControl) String() string {
 	return "Term:" + strconv.Itoa(control.Term) +
-		" LeaderId:" + control.LeaderId +
+		" LeaderId:" + control.LeaderID +
 		"\nConfiguration:" + control.Configuration.String()
 }
 
-func waitApiAgencyConfig(addr string, leaderId *string) {
+func waitAPIAgencyConfig(addr string, LeaderID *string) {
 	for {
 		client := &http.Client{
 			Timeout: 15 * time.Second,
@@ -173,20 +178,20 @@ func waitApiAgencyConfig(addr string, leaderId *string) {
 				fmt.Println("Only", len(control.Configuration.Pool), "agents in pool...")
 			} else if len(control.Configuration.Active) < 3 {
 				fmt.Println("Only", len(control.Configuration.Active), "active agents...")
-			} else if control.LeaderId == "" {
+			} else if control.LeaderID == "" {
 				fmt.Println("No leader yet...")
 			} else {
-				if *leaderId == "" {
-					*leaderId = control.LeaderId
+				if *LeaderID == "" {
+					*LeaderID = control.LeaderID
 					fmt.Println("Agent", addr, "sane.")
 					return
-				} else if *leaderId == control.LeaderId {
+				} else if *LeaderID == control.LeaderID {
 					fmt.Println("Agent", addr, "sane.")
 					return
 				}
-				fmt.Println("Seeing different leader than before: old:", *leaderId,
-					"new:", control.LeaderId, "starting from scratch...")
-				*leaderId = ""
+				fmt.Println("Seeing different leader than before: old:", *LeaderID,
+					"new:", control.LeaderID, "starting from scratch...")
+				*LeaderID = ""
 				return
 			}
 			time.Sleep(1000000000)
@@ -201,14 +206,14 @@ func waitApiAgencyConfig(addr string, leaderId *string) {
 }
 
 func testAgency() {
-	var leaderId string
-	waitApiVersion("http://localhost:4001")
-	waitApiVersion("http://localhost:4002")
-	waitApiVersion("http://localhost:4003")
+	var leaderID string
+	waitAPIVersion("http://localhost:4001")
+	waitAPIVersion("http://localhost:4002")
+	waitAPIVersion("http://localhost:4003")
 	for i := 0; i < 3; i++ {
 		port := strconv.Itoa(4001 + i)
-		waitApiAgencyConfig("http://localhost:"+port, &leaderId)
-		if leaderId == "" {
+		waitAPIAgencyConfig("http://localhost:"+port, &leaderID)
+		if leaderID == "" {
 			i = -1
 		}
 	}
