@@ -209,7 +209,7 @@ func testAgency() {
 		port := strconv.Itoa(4001 + i)
 		waitApiAgencyConfig("http://localhost:"+port, &leaderId)
 		if leaderId == "" {
-			i = 0
+			i = -1
 		}
 	}
 }
