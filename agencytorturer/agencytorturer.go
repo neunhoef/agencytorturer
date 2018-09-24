@@ -110,7 +110,7 @@ func killAgent(agentProc *os.Process, i int) {
 
 func waitAPIVersion(addr string) {
 	for {
-		r, e := http.Get(addr)
+		r, e := http.Get(addr + "/_api/version")
 		if r != nil && r.Body != nil {
 			defer r.Body.Close()
 		}
