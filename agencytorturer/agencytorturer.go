@@ -52,9 +52,7 @@ func makeArgs(myDir string, myAddress string, myPort string, i int) (args []stri
 		"--agency.size", "3",
 		"--agency.supervision", "true",
 		"--foxx.queues", "false",
-		"--javascript.v8-contexts", "1",
 		"--server.statistics", "false",
-		"--server.threads", "8",
 	)
 	for j := 0; j < 3; j++ {
 		if j != i {
